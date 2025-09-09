@@ -1,4 +1,4 @@
-from typing import Annotated, NotRequired, List
+from typing import Annotated, NotRequired, List, Tuple
 
 from langchain.chat_models import init_chat_model
 from typing_extensions import TypedDict
@@ -15,13 +15,13 @@ class State(TypedDict):
     description: str = ""
     generate_video: bool = False
     prompts: NotRequired[List[str]] = []
-    generated_video_files: NotRequired[List[str]] = []
     script: NotRequired[str] = ""
     voiceover: NotRequired[str] = ""
     cuts: NotRequired[List[int]] = []
     audio_file: NotRequired[str] = ""
     video_files: NotRequired[List[str]] = []
     audio_duration: NotRequired[float] = 0.0
+    cuts: List[Tuple[float, float, float]] = []
 
 
 graph_builder = StateGraph(State)
@@ -35,6 +35,31 @@ load_dotenv()
 from langchain_qwq import ChatQwen  # Qwen LLM
 llm = ChatQwen(model="qwen3-coder-plus")
 
+blog_llm = ChatQwen(model="qwen-flash")
+
+from langchain.prompts import ChatPromptTemplate
+
+blog_prompt = ChatPromptTemplate.from_messages([
+    ("system", 
+     """You are an expert blogger and content writer.  
+Given a short user prompt, expand it into a **comprehensive, engaging blog post**.  
+
+The blog should:  
+- Be at least 800–1200 words (unless otherwise specified).  
+- Start with a strong introduction that hooks the reader.  
+- Be structured with clear headings and subheadings.  
+- Use smooth transitions and a natural, conversational tone.  
+- End with a powerful conclusion or call-to-action.  
+
+Return only the blog text, no JSON, no explanations."""
+    ),
+    ("human", "{input}"),
+])
+
+
+def BlogGenerator(prompt: str):
+    result = (blog_prompt | blog_llm).invoke({"input": prompt})
+    return result
 
 
 import requests
@@ -50,10 +75,12 @@ def VideoGenerator(state: State):
         return Command(update={"video_files": video_files})
     project_name = state["project_name"]
     video_files = []
-    for i, prompt in enumerate(state["prompts"]):
+    prompts = state["prompts"]
+    for i, prompt in enumerate(prompts):
         print(f"Generating video for prompt {i+1}: {prompt}")
-        generate_video(prompt, "1280*720", project_name)
-        video_files.append(os.path.join(project_name,f"output{i}.mp4"))
+        path = os.path.join(project_name, f"output{i}.mp4")
+        generate_video(prompt, "1280*720", path)
+        video_files.append(path)
     return Command(update={"video_files": video_files})
 
 
@@ -142,19 +169,31 @@ def audio_generator(state: State):
     return Command(update={"audio_file": audio_filename, "audio_duration": audio_duration})
 
 
+from typing import Tuple
+
 class PromptOutput(BaseModel):
     prompts: List[str]
+    cuts: List[Tuple[float, float, float]]
+
 prompt3 = ChatPromptTemplate.from_messages([
     ("system",
      """You are an expert cinematic storyteller and prompt engineer specializing in creating detailed, scene-by-scene prompts for video generation.  
-     Given the voiceover script provided and the length of the audio, generate one or more vivid and richly detailed JSON scene prompts that visually interpret and complement the voiceover.
-     Note that each video generated is 5 seconds long. So, if the audio is 15 seconds long, you need to generate 3 prompts. If the audio is 20 seconds long, you need to generate 4 prompts and so on.  
-     Ensure that all scenes share a consistent thematic style in lighting, color palette, mood, and visual motifs, so the final video feels coherent and unified.  
-     Do NOT include text overlays or voiceover lines in the prompts—focus entirely on visual descriptions, actions, settings, and atmosphere that can guide video creation.  
-     Return the detailed video generation prompts as a JSON list under the key 'prompts'."""),
+
+Rules:
+- The total audio length is {audio_duration} seconds.  
+- Each scene must be exactly 5 seconds long, except the final one which may be shorter if the audio does not divide evenly.  
+- Calculate number of scenes = ceil(audio_duration / 5).  
+- For each scene, generate:
+   1. A vivid cinematic description (added to 'prompts').
+   2. A corresponding cut tuple (start, stop, duration in seconds) added to 'cuts'.
+- The format for cuts is: (start, stop, total_duration).  
+- The sum of all total_durations in 'cuts' MUST equal {audio_duration}.  
+- Return ONLY valid JSON with two keys: 'prompts' and 'cuts'.""" 
+    ),
     ("human", "{input}"),
 ])
-def JSONPromptGenerator(state: State):
+
+def VideoMetadataGenerator(state: State):
     # llm1 = prompt1 | llm
     # Create a list of prompts from planner.
     if "audio_duration" not in state or not state["audio_duration"]:
@@ -165,48 +204,52 @@ def JSONPromptGenerator(state: State):
         ]
         return Command(update={"prompts": dummy_prompts})
     else:
+        import math
         llm_structured = llm.with_structured_output(PromptOutput)
         result = (prompt3 | llm_structured).invoke({"input": state["voiceover"], "audio_duration": state["audio_duration"]})
-        return Command(update={"prompts": result.prompts})
+        print(f"Generated prompts: {result.prompts}")
+        print(f"Generated cuts: {result.cuts}")
+        return Command(update={"prompts": result.prompts, "cuts": result.cuts})
 
 import numpy as np
-from moviepy import AudioFileClip, concatenate_audioclips
+from moviepy import AudioFileClip, concatenate_audioclips, concatenate_videoclips
 
 def combine_videos_with_audio(state: State):
-    import os
-    import numpy as np
-    from moviepy import VideoFileClip, AudioFileClip, concatenate_videoclips
-    from moviepy.audio.AudioClip import AudioArrayClip
-    from langgraph.types import Command
 
     video_files = state["video_files"]
     print(video_files)
-    if state["generate_video"]==False:
+    if state["generate_video"]==False: ## THIS IS SO I DONT RUN OUT OF CREDITS
+        print("Skipping video generation as per user request.")
         video_files = ["output0.mp4", "output1.mp4", "output2.mp4", "output3.mp4", "output4.mp4"]
         video_files = [os.path.join("placeholder",v) for v in video_files]
+
+    else:
+        video_files = state["video_files"]
 
     if not video_files:
         print("No video files found in state — cannot combine.")
         return state
-
-    audio_file = "output_audio.mp3"
-    audio_file = os.path.join(state["project_name"], audio_file)
+    
+    audio_file = state["audio_file"]
+    # audio_file = os.path.join(state["project_name"], audio_file)
     if not os.path.exists(audio_file):
         print("No audio file found — cannot combine.")
         return state
 
+    cuts = state["cuts"]
     clips = []
     try:
-        for v in video_files:
-            if not os.path.exists(v):
-                print(f"File not found: {v}")
+        for i,cut in enumerate(cuts):
+            if not os.path.exists(video_files[i]):
+                print(f"File not found: {video_files[i]}")
                 continue
-            clip = VideoFileClip(v)
+            clip = VideoFileClip(video_files[i])
             if clip.duration is None:
-                print(f"Skipping {v}: duration is None")
+                print(f"Skipping {video_files[i]}: duration is None")
                 clip.close()
                 continue
-            clips.append(clip)
+            trimmed_clip = clip.subclipped(0, cut[2])
+            clips.append(trimmed_clip)
 
         if not clips:
             print("No valid video clips loaded.")
@@ -219,13 +262,13 @@ def combine_videos_with_audio(state: State):
         # If audio is shorter, trim the video to audio duration (remove silence padding)
         if audio_clip.duration < final_clip.duration:
             print(f"Trimming video from {final_clip.duration} to audio duration {audio_clip.duration}")
-            final_clip = final_clip.subclip(0, audio_clip.duration)
+            final_clip = final_clip.subclipped(0, audio_clip.duration)
 
         # If audio longer, trim audio to video duration
-        elif audio_clip.duration > final_clip.duration:
-            audio_clip = audio_clip.subclip(0, final_clip.duration)
+        # elif audio_clip.duration > final_clip.duration:
+        #     audio_clip = audio_clip.subclip(0, final_clip.duration)
 
-        final_clip = final_clip.set_audio(audio_clip)
+        final_clip = final_clip.with_audio(audio_clip)
 
         output_file = os.path.join(state["project_name"], "final_video.mp4")
         final_clip.write_videofile(output_file, codec="libx264", audio_codec="aac")
@@ -245,14 +288,14 @@ def combine_videos_with_audio(state: State):
 graph_builder = StateGraph(State)
 graph_builder.add_node("ScriptGenerator", ScriptGenerator)
 graph_builder.add_node("audio_generator", audio_generator)
-graph_builder.add_node("SceneGenerator", JSONPromptGenerator)
+graph_builder.add_node("VideoMetadataGenerator", VideoMetadataGenerator)
 graph_builder.add_node("VideoGenerator", VideoGenerator)
 graph_builder.add_node("combine_videos_with_audio", combine_videos_with_audio)
 graph_builder.add_edge(START, "ScriptGenerator")
 graph_builder.add_edge("ScriptGenerator", "audio_generator")
-graph_builder.add_edge("audio_generator", "VideoGenerator")
-graph_builder.add_edge("VideoGenerator", "SceneGenerator")
-graph_builder.add_edge("SceneGenerator", "combine_videos_with_audio")
+graph_builder.add_edge("audio_generator", "VideoMetadataGenerator")  # Changed to match function name in the
+graph_builder.add_edge("VideoMetadataGenerator", "VideoGenerator")
+graph_builder.add_edge("VideoGenerator", "combine_videos_with_audio")
 graph_builder.add_edge("combine_videos_with_audio", END)
 graph = graph_builder.compile()
 
