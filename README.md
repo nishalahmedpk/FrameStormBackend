@@ -1,4 +1,4 @@
-22# FrameStormBackend
+# FrameStormBackend
 
 FrameStormBackend is a FastAPI-based backend for generating videos, blogs, and images. It supports agentic editing workflows and provides APIs for seamless interaction with a frontend application.
 
