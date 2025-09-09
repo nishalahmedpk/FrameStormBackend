@@ -72,7 +72,7 @@ def generate_video_api(project_name: str, description: str, generate_video: bool
     state["audio_file"] = result.get("audio_file", "")
     state["audio_duration"] = result.get("audio_duration", 0.0)
     state["voiceover"] = result.get("voiceover", "")
-    conversation_states[project_name] = state
+    conversation_states[project_name] = result
 
     return {
         "graph_state": result,
@@ -151,6 +151,7 @@ def chat_with_video(request: ChatRequest):
     print(state)
     state["project_name"] = request.project_name
     state.setdefault("messages", [])
+    state["input"] = request.question
     state["messages"].append({"role": "user", "content": request.question})
 
     # Invoke the chat graph
