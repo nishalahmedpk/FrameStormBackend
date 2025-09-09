@@ -4,13 +4,12 @@ from langchain.chat_models import init_chat_model
 from typing_extensions import TypedDict
 
 from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
+from langgraph.graph.message import add_messages, AnyMessage
 
 
 class State(TypedDict):
-    # messages: Annotated[list, add_messages]
-    # prompts: List[str] = []
-    # generated_video_files: List[str] = []
+    messages: NotRequired[Annotated[list[AnyMessage], add_messages]]
+    final_video: NotRequired[str]
     project_name: str = "Viral Video Maker"
     description: str = ""
     generate_video: bool = False
@@ -22,6 +21,7 @@ class State(TypedDict):
     video_files: NotRequired[List[str]] = []
     audio_duration: NotRequired[float] = 0.0
     cuts: List[Tuple[float, float, float]] = []
+    blog: NotRequired[str] = ""
 
 
 graph_builder = StateGraph(State)
@@ -71,7 +71,7 @@ def VideoGenerator(state: State):
     if state["generate_video"]==False:
         print("Skipping video generation as per user request.")
         video_files = ["output0.mp4", "output1.mp4", "output2.mp4", "output3.mp4", "output4.mp4"]
-        video_files = [os.path.join("placeholder",v) for v in video_files]
+        video_files = [os.path.join("dummyvids",v) for v in video_files]
         return Command(update={"video_files": video_files})
     project_name = state["project_name"]
     video_files = []
@@ -221,7 +221,7 @@ def combine_videos_with_audio(state: State):
     if state["generate_video"]==False: ## THIS IS SO I DONT RUN OUT OF CREDITS
         print("Skipping video generation as per user request.")
         video_files = ["output0.mp4", "output1.mp4", "output2.mp4", "output3.mp4", "output4.mp4"]
-        video_files = [os.path.join("placeholder",v) for v in video_files]
+        video_files = [os.path.join("dummyvids",v) for v in video_files]
 
     else:
         video_files = state["video_files"]
@@ -300,3 +300,185 @@ graph_builder.add_edge("combine_videos_with_audio", END)
 graph = graph_builder.compile()
 
 # graph.invoke(State(description=""" Create a viral video for promoting BTIS Pilani""")) #Wrap this in a function to invoke the graph
+
+chatgraph = StateGraph(State)
+
+video_editor_template = """
+You are a highly skilled video editing assistant managing a video project. Your task is to process video clips, voiceovers, and rearrangements based on the user's instructions. 
+
+Rules for the agent:
+
+1. **Video Clips**:
+    - Each video clip is **5 seconds long** unless otherwise trimmed. 
+    - Always check the list of available `video_files` before deciding to generate a new video.
+    - Only generate a new video if the user explicitly requests it.
+    - When generating a new video, always **ask for confirmation** first.
+    - Save new videos in the project folder and update the `video_files` state.
+
+2. **Audio / Voiceover**:
+    - Always verify the total duration of the `audio_file` relative to the combined video length.
+    - If the `audio_duration` exceeds the total video time:
+         - Ask the user if they want to **loop existing videos** or **generate a new video** to match the audio length.
+    - Always ask for confirmation before generating new audio.
+    - Save audio as `output_audio.mp3` in the project folder and update `audio_file` and `audio_duration`.
+
+3. **Video Rearrangement**:
+    - Use the `rearrange_clips` tool to trim or rearrange videos according to `cuts`.
+    - Ensure each cut duration is valid (between 0 and the video clip duration, which is 5 seconds).
+    - After rearranging, save the final video as `final_video.mp4` and update the project state.
+
+4. **Tool Selection Logic**:
+    - Decide which tool to call based on the user's request.
+    - Always include the **current state values** when calling a tool (`video_files`, `cuts`, `project_name`, `voiceover`, `audio_duration`, `audio_file`).
+    - After executing a tool, update the state with any new files or durations returned by the tool.
+
+5. **Communication with User**:
+    - Confirm before generating anything new (videos or audio).
+    - Notify the user after a tool has completed successfully.
+    - Always respond with **plain text messages** summarizing the action and next steps.
+
+6. **Outputs**:
+    - Always update the `messages` array with user-facing information.
+
+Your current state is:
+                                                "video_files": {video_files}
+                                                "cuts": {cuts}
+                                                "project_name": {project_name}
+                                                "voiceover": {voiceover}
+                                                "audio_duration": {audio_duration}
+                                                "audio_file": {audio_file}
+
+Use the tools `generate_new_audio`, `rearrange_clips`, and `generate_new_video` following these rules to manage the video project.
+"""
+
+
+video_editor_prompt = ChatPromptTemplate.from_messages(
+    [("system", video_editor_template), ("human", "{input}")]
+)
+
+
+from langchain_core.tools import InjectedToolCallId, tool
+from langgraph.prebuilt import ToolNode
+from langchain_core.messages import HumanMessage, ToolMessage
+
+@tool
+def generate_new_audio(new_voiceover: str, project_name: str, tool_call_id: Annotated[str, InjectedToolCallId] = None) -> str:
+    """Generate new audio using ElevenLabs TTS and save to the audio file."""
+    audio_filename = os.path.join(project_name, "output_audio.mp3")
+
+    # Initialize ElevenLabs client
+    client = ElevenLabs()
+
+    # Convert text to speech (returns a generator)
+    audio_stream = client.text_to_speech.convert(
+        text=new_voiceover,
+        voice_id="JBFqnCBsd6RMkjVDRZzb",
+        model_id="eleven_multilingual_v2",
+        output_format="mp3_44100_128"
+    )
+
+    # Combine generator chunks into bytes
+    audio_bytes = b"".join(audio_stream)
+
+    # Save to file
+    with open(audio_filename, "wb") as f:
+        f.write(audio_bytes)
+
+    print(f"Generated audio saved as '{audio_filename}'")
+
+    # Obtain the length of the audio file in seconds
+    from moviepy import AudioFileClip
+    audio_clip = AudioFileClip(audio_filename)
+    audio_duration = audio_clip.duration
+    audio_clip.close()
+    print(f"Audio duration: {audio_duration} seconds")
+
+    return Command(update={"audio_file": audio_filename, "audio_duration": audio_duration, "messages": [
+        ToolMessage(
+            content="Audio updated successfully ✅",
+            tool_call_id=tool_call_id,
+        )
+    ]})
+
+@tool
+def rearrange_clips(videos: List[str], new_cuts: List[Tuple[float, float, float]], project_name: str, tool_call_id: Annotated[str, InjectedToolCallId] = None) -> str:
+    """Rearrange video clips based on new cuts."""
+    try:
+        clips = []
+        for i, cut in enumerate(new_cuts):
+            if not os.path.exists(videos[i]):
+                print(f"File not found: {videos[i]}")
+                continue
+            clip = VideoFileClip(videos[i])
+            if clip.duration is None:
+                print(f"Skipping {videos[i]}: duration is None")
+                clip.close()
+                continue
+            trimmed_clip = clip.subclipped(0, cut[2])
+            clips.append(trimmed_clip)
+
+        if not clips:
+            print("No valid video clips loaded.")
+            return "No valid video clips loaded."
+
+        final_clip = concatenate_videoclips(clips, method="compose")
+
+        output_file = os.path.join(project_name, "final_video.mp4")
+        final_clip.write_videofile(output_file, codec="libx264", audio_codec="aac")
+
+        print(f"Final video saved as {output_file}")
+        return Command(update={"final_video": output_file, "messages": [
+            ToolMessage(
+                content="Video rearranged successfully ✅",
+                tool_call_id=tool_call_id,
+            )
+        ]})
+
+    except Exception as e:
+        print(f"Error rearranging videos: {e}")
+        return f"Error rearranging videos: {e}"
+
+    finally:
+        for c in clips:
+            c.close()
+
+@tool
+def generate_new_video(video_files: List[str],filename: str,prompt: str, size: str, project_name: str, tool_call_id: Annotated[str, InjectedToolCallId] = None) -> str:
+    """Generate a new video clip based on the prompt."""
+    from videogeneration import generate_video
+    path = os.path.join(project_name, f"{filename}.mp4")
+    generate_video(prompt, size, path)
+    video_files.append(path)
+    return Command(update={"video_files": video_files, "messages": [
+        ToolMessage(
+            content="New video generated successfully ✅",
+            tool_call_id=tool_call_id,
+        )
+    ]})
+def VideoEditingAgent(state: State):
+    llm_chain = video_editor_prompt | llm.bind_tools([generate_new_audio, rearrange_clips, generate_new_video])
+    llm_response = llm_chain.invoke({"input": state["messages"],
+                                    "video_files": state["video_files"],
+                                    "cuts": state["cuts"],
+                                    "project_name": state["project_name"],
+                                    "voiceover": state["voiceover"],
+                                    "audio_duration": state["audio_duration"],
+                                    "audio_file": state["audio_file"]},
+                                    function_call="auto")
+    return {"messages": llm_response}
+
+def route_tools(state: State):
+    messages = state.get("messages", [])
+    if messages:
+        ai_message = messages[-1]
+        if hasattr(ai_message, "tool_calls") and len(ai_message.tool_calls) > 0:
+            return "tools"
+    return END
+
+chatgraph.add_node("VideoEditingAgent", VideoEditingAgent)
+chatgraph.add_node("tools", ToolNode([generate_new_audio, rearrange_clips, generate_new_video]))
+chatgraph.add_conditional_edges("VideoEditingAgent", route_tools, {"tools": "tools", END: END})
+chatgraph.add_edge("tools", "VideoEditingAgent")
+chatgraph.add_edge(START, "VideoEditingAgent")
+
+chatgraph = chatgraph.compile()

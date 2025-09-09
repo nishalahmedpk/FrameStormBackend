@@ -1,11 +1,14 @@
-from typing import Union
+from typing import Dict, Union
 
 from fastapi import FastAPI
 
 from videoworkflow import graph, State
 
+from pydantic import BaseModel
+
 app = FastAPI()
 
+conversation_states: Dict[str, dict] = {}
 
 @app.get("/")
 def read_root():
@@ -92,18 +95,37 @@ def generate_blog(prompt: str, project_name: str):
     blog_post = BlogGenerator(prompt)
     return {"blog_post": blog_post}
 
-@app.get("/get_dummy_video")
-def get_dummy_video(project_name: str):
+
+class ChatRequest(BaseModel):
+    project_name: str
+    question: str
+
+@app.post("/chat_with_video")
+def chat_with_video(request: ChatRequest):
     """
-    Endpoint to retrieve a dummy video file for testing purposes.
+    Endpoint to chat with the generated video content with persistent state.
     
-    :return: Path to the dummy video file.
+    :param request: ChatRequest containing project_name and question
+    :return: Response to the question based on the video content and persistent conversation
     """
-    from fastapi.responses import FileResponse
-    import shutil
+    from videoworkflow import chatgraph
     import os
-    path = os.path.join(project_name,"final_video.mp4")
-    if not os.path.isfile(path):
-        return {"error": "File not found"}
-    return {"video_path": os.path.abspath(path)}
-    # return FileResponse(path, media_type="video/mp4")
+
+    # Retrieve or initialize state for this project
+    state = conversation_states.get(request.project_name, {"messages": [], "project_name": request.project_name})
+
+    # Append the new user message to state
+    state["messages"].append({"role": "user", "content": request.question})
+
+    # Invoke the chat graph with the updated state
+    result = chatgraph.invoke(state, request.question)
+
+    # Update the stored state
+    conversation_states[request.project_name] = state
+
+    # Return the response and path for frontend usage
+    return {
+        "graph_state": result,
+        "conversation": state["messages"],
+        "project_path": os.path.abspath(request.project_name)
+    }
