@@ -1,4 +1,4 @@
-# FrameStormBackend
+22# FrameStormBackend
 
 FrameStormBackend is a FastAPI-based backend for generating videos, blogs, and images. It supports agentic editing workflows and provides APIs for seamless interaction with a frontend application.
 
@@ -19,7 +19,8 @@ FrameStormBackend is a FastAPI-based backend for generating videos, blogs, and i
    git clone <your-repo-url>
    cd FrameStormBackend
    pip install uv
-   uv run fastapi run api.py ```
+   uv run fastapi run api.py
+```
 
 ## Available Endpoints
 
