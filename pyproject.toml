@@ -25,5 +25,6 @@ dependencies = [
     "dashscope>=1.24.4",
     "elevenlabs>=2.15.0",
     "moviepy>=2.2.1",
+    "redis>=6.4.0",
 ]
 
