@@ -303,63 +303,153 @@ graph = graph_builder.compile()
 
 chatgraph = StateGraph(State)
 
-video_editor_template = """
-You are a highly skilled video editing assistant managing a video project. 
-Your task is to process video clips, voiceovers, and rearrangements based on the user's instructions. 
+audio_generation_template = """
+You are an audio generation specialist for video projects.
+Your primary responsibility is to determine if new audio needs to be generated and manage voiceover creation.
 
-Rules for the agent:
+Rules for audio generation:
 
-1. **Video Clips**:
-    - Each video clip is **5 seconds long** unless otherwise trimmed. 
-    - Always check the list of available `video_files` before deciding to generate a new video.
-    - You may generate at most **one new video per project**.
-    - Save new videos in the project folder and update the `video_files` state.
+1. **Audio Analysis**:
+    - Check if the user is requesting a new voiceover or audio modification
+    - Verify if the current `audio_file` exists and matches the project requirements
+    - Analyze if the `voiceover` text has been updated or changed
 
-2. **Audio / Voiceover**:
-    - Always verify the total duration of the `audio_file` relative to the combined video length.
-    - If the `audio_duration` exceeds the total video time:
-         - Automatically either **loop existing videos** or **generate one new video** to match the audio length.
-    - Save audio as `output_audio.mp3` in the project folder and update `audio_file` and `audio_duration`.
+2. **Audio Generation Decision**:
+    - Generate new audio ONLY if:
+        * User explicitly requests new voiceover
+        * The voiceover text has been modified
+        * No audio file exists but voiceover text is provided
+        * User wants to change the voice or audio style
+    - Do NOT generate audio if:
+        * User is only asking about video editing or rearrangement
+        * Audio already exists and matches current voiceover
+        * No voiceover text changes are requested
 
-3. **Video Rearrangement**:
-    - Use the `rearrange_clips` tool to trim or rearrange videos according to `cuts`.
-    - Ensure each cut duration is valid (between 0 and the video clip duration, which is 5 seconds).
-    - After rearranging, save the final video as `final_video.mp4` and update the project state.
+3. **Tool Usage**:
+    - Use `generate_new_audio` tool when audio generation is needed
+    - Always include the current voiceover text and project_name
+    - Update the audio_file and audio_duration in the state
 
-4. **Tool Selection Logic**:
-    - Decide which tool to call based on the user's request.
-    - Always include the **current state values** when calling a tool (`video_files`, `cuts`, `project_name`, `voiceover`, `audio_duration`, `audio_file`).
-    - After executing a tool, update the state with any new files or durations returned by the tool.
+4. **Communication**:
+    - Clearly explain your decision whether to generate audio or not
+    - If generating audio, inform the user about the process
+    - If skipping, explain why audio generation is not needed
 
-5. **Communication with User**:
-    - Do not ask for confirmations.
-    - Notify the user after a tool has completed successfully.
-    - Always respond with **plain text messages** summarizing the action and next steps.
-
-6. **Outputs**:
-    - Always update the `messages` array with user-facing information.
-
-Your current state is:
-    "video_files": {video_files}
-    "cuts": {cuts}
+Current state:
     "project_name": {project_name}
     "voiceover": {voiceover}
     "audio_duration": {audio_duration}
     "audio_file": {audio_file}
 
-Use the tools `generate_new_audio`, `rearrange_clips`, and `generate_new_video` following these rules to manage the video project.
+Only use the `generate_new_audio` tool if audio generation is actually required.
+"""
+
+video_generation_template = """
+You are a video generation specialist for video projects.
+Your responsibility is to determine if new video clips need to be generated based on project requirements.
+
+Rules for video generation:
+
+1. **Video Analysis**:
+    - Check the current `video_files` list and their availability
+    - Compare `audio_duration` with total video duration (each video is 5 seconds)
+    - Assess if user is requesting new video content or additional clips
+
+2. **Video Generation Decision**:
+    - Generate new video ONLY if:
+        * User explicitly requests new video content
+        * Audio duration exceeds available video duration (need more clips)
+        * Specific new scenes or prompts are requested
+        * Current videos don't match the project theme
+    - Do NOT generate video if:
+        * Sufficient videos already exist for the audio duration
+        * User is only asking about audio or rearrangement
+        * No new content is specifically requested
+
+3. **Tool Usage**:
+    - Use `generate_new_video` tool when new video generation is needed
+    - Provide descriptive prompts for video content
+    - Use appropriate video size (default: "1280*720")
+    - Update video_files list with new video paths
+
+4. **Communication**:
+    - Explain your decision whether to generate videos or not
+    - If generating, describe what type of video will be created
+    - If skipping, explain why video generation is not needed
+
+Current state:
+    "video_files": {video_files}
+    "audio_duration": {audio_duration}
+    "project_name": {project_name}
+
+Only use the `generate_new_video` tool if video generation is actually required.
+"""
+
+clip_rearrangement_template = """
+You are a video clip modification specialist for video projects.
+Your responsibility is to organize, trim, arrange, add, remove, and modify video clips according to user requirements.
+
+Rules for clip modification:
+
+1. **Modification Analysis**:
+    - Check if user wants to modify video timing, order, duration, add new clips, or remove existing ones
+    - Analyze current `cuts` and `video_files` to understand existing arrangement
+    - Verify what specific changes are needed (reorder, trim, add, remove, or adjust timing)
+
+2. **Modification Decision**:
+    - Modify clips ONLY if:
+        * User explicitly requests video reordering
+        * User wants to add new video clips to the sequence
+        * User wants to remove or delete specific clips
+        * Timing adjustments are needed for audio sync
+        * Clip durations need to be modified or trimmed
+        * User wants to change clip order or sequence
+        * User wants to remove or shorten specific scenes
+    - Do NOT modify if:
+        * User is only asking about audio or new video generation
+        * Current arrangement is satisfactory
+        * No specific changes are requested
+
+3. **Tool Usage**:
+    - Use `rearrange_clips` tool when modification is needed
+    - Ensure cut durations are valid (0 to 5 seconds per clip)
+    - Provide proper video file paths and cut specifications
+    - Handle clip additions by updating video_files list
+    - Handle clip removals by excluding from rearrangement
+    - Save the final modified video
+
+4. **Communication**:
+    - Explain your decision whether to modify clips or not
+    - If modifying, describe the changes being made (add/remove/reorder/trim)
+    - If skipping, explain why modification is not needed
+
+Current state:
+    "video_files": {video_files}
+    "cuts": {cuts}
+    "project_name": {project_name}
+
+Only use the `rearrange_clips` tool if clip modification is actually required.
 """
 
 
 
-video_editor_prompt = ChatPromptTemplate.from_messages(
-    [("system", video_editor_template), ("human", "{input}")]
+audio_generation_prompt = ChatPromptTemplate.from_messages(
+    [("system", audio_generation_template), ("human", "{input}")]
+)
+
+video_generation_prompt = ChatPromptTemplate.from_messages(
+    [("system", video_generation_template), ("human", "{input}")]
+)
+
+clip_rearrangement_prompt = ChatPromptTemplate.from_messages(
+    [("system", clip_rearrangement_template), ("human", "{input}")]
 )
 
 
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import HumanMessage, ToolMessage
+from langgraph.checkpoint.memory import InMemorySaver
 
 @tool
 def generate_new_audio(new_voiceover: str, project_name: str, tool_call_id: Annotated[str, InjectedToolCallId] = None) -> str:
@@ -401,8 +491,9 @@ def generate_new_audio(new_voiceover: str, project_name: str, tool_call_id: Anno
     ]})
 
 @tool
-def rearrange_clips(videos: List[str], new_cuts: List[Tuple[float, float, float]], project_name: str, tool_call_id: Annotated[str, InjectedToolCallId] = None) -> str:
+def rearrange_clips(videos: List[str], new_cuts: List[Tuple[float, float, float]], project_name: str, audio_file: str, tool_call_id: Annotated[str, InjectedToolCallId] = None) -> str:
     """Rearrange video clips based on new cuts."""
+    print("Entered Rearrange Clips Tool")
     try:
         clips = []
         for i, cut in enumerate(new_cuts):
@@ -423,8 +514,25 @@ def rearrange_clips(videos: List[str], new_cuts: List[Tuple[float, float, float]
 
         final_clip = concatenate_videoclips(clips, method="compose")
 
+        # output_file = os.path.join(project_name, "final_video.mp4")
+        # final_clip.write_videofile(output_file, codec="libx264", audio_codec="aac")
+
+        audio_clip = AudioFileClip(audio_file)
+
+        # If audio is shorter, trim the video to audio duration (remove silence padding)
+        if audio_clip.duration < final_clip.duration:
+            print(f"Trimming video from {final_clip.duration} to audio duration {audio_clip.duration}")
+            final_clip = final_clip.subclipped(0, audio_clip.duration)
+
+        # If audio longer, trim audio to video duration
+        # elif audio_clip.duration > final_clip.duration:
+        #     audio_clip = audio_clip.subclip(0, final_clip.duration)
+
+        final_clip = final_clip.with_audio(audio_clip)
+
         output_file = os.path.join(project_name, "final_video.mp4")
         final_clip.write_videofile(output_file, codec="libx264", audio_codec="aac")
+
 
         print(f"Final video saved as {output_file}")
         return Command(update={"final_video": output_file, "messages": [
@@ -445,8 +553,11 @@ def rearrange_clips(videos: List[str], new_cuts: List[Tuple[float, float, float]
 @tool
 def generate_new_video(video_files: List[str],filename: str,prompt: str, size: str, project_name: str, tool_call_id: Annotated[str, InjectedToolCallId] = None) -> str:
     """Generate a new video clip based on the prompt."""
+    print("Entered Generate New Video Tool")
     from videogeneration import generate_video
-    path = os.path.join(project_name, f"{filename}.mp4")
+    #ERROR
+    # path = os.path.join(project_name, f"{filename}.mp4")
+    path = filename
     generate_video(prompt, size, path)
     video_files.append(path)
     return Command(update={"video_files": video_files, "messages": [
@@ -455,30 +566,82 @@ def generate_new_video(video_files: List[str],filename: str,prompt: str, size: s
             tool_call_id=tool_call_id,
         )
     ]})
-def VideoEditingAgent(state: State):
-    llm_chain = video_editor_prompt | llm.bind_tools([generate_new_audio, rearrange_clips, generate_new_video])
-    llm_response = llm_chain.invoke({"input": state["messages"],
-                                    "video_files": state["video_files"],
-                                    "cuts": state["cuts"],
-                                    "project_name": state["project_name"],
-                                    "voiceover": state["voiceover"],
-                                    "audio_duration": state["audio_duration"],
-                                    "audio_file": state["audio_file"]},
-                                    function_call="auto")
+
+checkpoint_saver = InMemorySaver()
+
+def AudioGenerationAgent(state: State):
+    llm_chain = audio_generation_prompt | llm.bind_tools([generate_new_audio])
+    llm_response = llm_chain.invoke({"input": state.get("messages", []),
+                                    "project_name": state.get("project_name", "default_project"),
+                                    "voiceover": state.get("voiceover", ""),
+                                    "audio_duration": state.get("audio_duration", 0.0),
+                                    "audio_file": state.get("audio_file", "")})
     return {"messages": llm_response}
 
-def route_tools(state: State):
+def VideoGenerationAgent(state: State):
+    llm_chain = video_generation_prompt | llm.bind_tools([generate_new_video])
+    llm_response = llm_chain.invoke({"input": state.get("messages", []),
+                                    "video_files": state.get("video_files", []),
+                                    "audio_duration": state.get("audio_duration", 0.0),
+                                    "project_name": state.get("project_name", "default_project")})
+    return {"messages": llm_response}
+
+def ClipRearrangementAgent(state: State):
+    llm_chain = clip_rearrangement_prompt | llm.bind_tools([rearrange_clips])
+    llm_response = llm_chain.invoke({"input": state.get("messages", []),
+                                    "video_files": state.get("video_files", []),
+                                    "cuts": state.get("cuts", []),
+                                    "project_name": state.get("project_name", "default_project"),
+                                    "audio_file": state.get("audio_file", "")})
+    return {"messages": llm_response}
+
+def route_audio_tools(state: State):
     messages = state.get("messages", [])
     if messages:
         ai_message = messages[-1]
         if hasattr(ai_message, "tool_calls") and len(ai_message.tool_calls) > 0:
-            return "tools"
+            return "audio_tools"
+    return "VideoGenerationAgent"
+
+def route_video_tools(state: State):
+    messages = state.get("messages", [])
+    if messages:
+        ai_message = messages[-1]
+        if hasattr(ai_message, "tool_calls") and len(ai_message.tool_calls) > 0:
+            return "video_tools"
+    return "ClipRearrangementAgent"
+
+def route_clip_tools(state: State):
+    messages = state.get("messages", [])
+    if messages:
+        ai_message = messages[-1]
+        if hasattr(ai_message, "tool_calls") and len(ai_message.tool_calls) > 0:
+            return "clip_tools"
     return END
 
-chatgraph.add_node("VideoEditingAgent", VideoEditingAgent)
-chatgraph.add_node("tools", ToolNode([generate_new_audio, rearrange_clips, generate_new_video]))
-chatgraph.add_conditional_edges("VideoEditingAgent", route_tools, {"tools": "tools", END: END})
-chatgraph.add_edge("tools", "VideoEditingAgent")
-chatgraph.add_edge(START, "VideoEditingAgent")
+chatgraph.add_node("AudioGenerationAgent", AudioGenerationAgent)
+chatgraph.add_node("VideoGenerationAgent", VideoGenerationAgent)
+chatgraph.add_node("ClipRearrangementAgent", ClipRearrangementAgent)
+chatgraph.add_node("audio_tools", ToolNode([generate_new_audio]))
+chatgraph.add_node("video_tools", ToolNode([generate_new_video]))
+chatgraph.add_node("clip_tools", ToolNode([rearrange_clips]))
 
-chatgraph = chatgraph.compile()
+chatgraph.add_conditional_edges("AudioGenerationAgent", route_audio_tools, {
+    "audio_tools": "audio_tools", 
+    "VideoGenerationAgent": "VideoGenerationAgent"
+})
+chatgraph.add_conditional_edges("VideoGenerationAgent", route_video_tools, {
+    "video_tools": "video_tools",
+    "ClipRearrangementAgent": "ClipRearrangementAgent"
+})
+chatgraph.add_conditional_edges("ClipRearrangementAgent", route_clip_tools, {
+    "clip_tools": "clip_tools",
+    END: END
+})
+
+chatgraph.add_edge("audio_tools", "VideoGenerationAgent")
+chatgraph.add_edge("video_tools", "ClipRearrangementAgent")
+chatgraph.add_edge("clip_tools", END)
+chatgraph.add_edge(START, "AudioGenerationAgent")
+
+chatgraph = chatgraph.compile(checkpointer=checkpoint_saver)

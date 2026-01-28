@@ -12,8 +12,40 @@ import requests
 from http import HTTPStatus
 from urllib.parse import urlparse, unquote
 from pathlib import PurePosixPath
+from langgraph.checkpoint.memory import InMemorySaver
 
 app = FastAPI()
+
+import json
+import redis
+
+# Setup Redis client
+redis_client = redis.Redis(host="localhost", port=6379, db=0)
+
+def save_state(project_name: str, state: dict):
+    redis_client.set(project_name, json.dumps(state))
+
+def load_state(project_name: str) -> dict:
+    data = redis_client.get(project_name)
+    if data:
+        return json.loads(data)
+    else:
+        # Return a default state with all required fields
+        return {
+            "messages": [],
+            "final_video": "",
+            "project_name": project_name,
+            "description": "",
+            "generate_video": False,
+            "prompts": [],
+            "script": "",
+            "voiceover": "",
+            "cuts": [],
+            "audio_file": "",
+            "video_files": [],
+            "audio_duration": 0.0,
+            "blog": ""
+        }
 
 # Persistent conversation states per project
 conversation_states: Dict[str, dict] = {}
@@ -49,19 +81,11 @@ def generate_video_api(project_name: str, description: str, generate_video: bool
         os.makedirs(project_name, exist_ok=True)
 
     # Retrieve existing state or create a new one
-    state = conversation_states.get(project_name)
-    if not state:
-        state = State()
-        state["project_name"] = project_name
-        state["description"] = description
-        state["generate_video"] = generate_video
-        state["messages"] = []
-        conversation_states[project_name] = state
-    else:
-        # Update description and generate_video flag if needed
-        state["description"] = description
-        state["generate_video"] = generate_video
-
+    state = load_state(project_name)
+    state["project_name"] = project_name
+    state["description"] = description
+    state["generate_video"] = generate_video
+    state["messages"] = []
     # Invoke the video graph
     result = graph.invoke(state)
 
@@ -72,7 +96,7 @@ def generate_video_api(project_name: str, description: str, generate_video: bool
     state["audio_file"] = result.get("audio_file", "")
     state["audio_duration"] = result.get("audio_duration", 0.0)
     state["voiceover"] = result.get("voiceover", "")
-    conversation_states[project_name] = result
+    save_state(project_name, state)
 
     return {
         "graph_state": result,
@@ -109,13 +133,15 @@ def generate_image(prompt: str, project_name: str):
                 f.write(requests.get(result_item.url).content)
 
             # Update state
-            state = conversation_states.get(project_name, State())
+            # state = conversation_states.get(project_name, State())
+            state = load_state(project_name)
             state.setdefault("prompts", []).append(prompt)
-            conversation_states[project_name] = state
+            # conversation_states[project_name] = state
+            save_state(project_name, state)
 
             return {"image_path": os.path.abspath(file_path), "state": state}
     else:
-        return {"image_path": None, "state": conversation_states.get(project_name)}
+        return {"image_path": None, "state": load_state(project_name)}
 
 # ------------------------------
 # Generate Blog
@@ -128,41 +154,45 @@ def generate_blog(prompt: str, project_name: str):
     blog_post = BlogGenerator(prompt)
 
     # Update state
-    state = conversation_states.get(project_name, State())
+    state = load_state(project_name)
     state["blog"] = blog_post
-    conversation_states[project_name] = state
+    save_state(project_name, state)
 
     return {"blog_post": blog_post, "state": state}
 
 # ------------------------------
 # Chat with Video (Persistent)
 # ------------------------------
-class ChatRequest(BaseModel):
-    project_name: str
-    question: str
+# class ChatRequest(BaseModel):
+#     project_name: str
+#     question: str
 
 @app.post("/chat_with_video")
-def chat_with_video(request: ChatRequest):
+def chat_with_video(project_name: str, question: str):
     """
     Chat with the video content using persistent state.
     """
     # Retrieve or initialize state for this project
-    state = conversation_states.get(request.project_name, State())
+    state = load_state(project_name)
     print(state)
-    state["project_name"] = request.project_name
+    state["project_name"] = project_name
     state.setdefault("messages", [])
-    state["input"] = request.question
-    state["messages"].append({"role": "user", "content": request.question})
+    state["input"] = question
+    # state["messages"].append({"role": "user", "content": question})
+    state["messages"] = [{"role": "user", "content": question}]
 
     # Invoke the chat graph
-    result = chatgraph.invoke(state)
+    from langchain_core.runnables import RunnableConfig
+    config: RunnableConfig = {"configurable": {"thread_id": project_name}}
+    result = chatgraph.invoke(state, config)
 
     # Update persistent state
-    conversation_states[request.project_name] = state
+    # conversation_states[request.project_name] = state
+    save_state(project_name, state)
 
     return {
         "graph_state": result,
         "conversation": state["messages"],
-        "project_path": os.path.abspath(request.project_name),
+        "project_path": os.path.abspath(project_name),
         "state": state
     }
