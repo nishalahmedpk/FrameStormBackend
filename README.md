@@ -54,7 +54,7 @@ An automated video generation pipeline that takes text descriptions and produces
 - Python 3.9+
 - Redis server running locally
 - API Keys:
-  - [Alibaba Cloud Dashscope](https://dashscope.aliyuncs.com/) (for video generation)
+  - [Alibaba Cloud Dashscope](https://modelstudio.alibabacloud.com/) (for video generation)
   - [ElevenLabs](https://elevenlabs.io/) (for text-to-speech)
   - [LangSmith](https://smith.langchain.com/) (optional, for monitoring)
 
