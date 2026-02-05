@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # Redis service for state management
+  redis:
+    image: redis:7-alpine
+    container_name: framestorm-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - framestorm-network
+
+  # FrameStorm API service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: framestorm-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-framestorm}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      - ./:/app
+      - video-output:/app/output
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - framestorm-network
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  video-output:
+
+networks:
+  framestorm-network:
+    driver: bridge
