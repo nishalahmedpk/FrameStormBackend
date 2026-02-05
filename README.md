@@ -52,7 +52,9 @@ An automated video generation pipeline that takes text descriptions and produces
 ## Getting Started
 
 ### Prerequisites
-- Docker & Docker Compose
+- Python 3.10+
+- [uv](https://github.com/astral-sh/uv) package manager
+- Redis running locally
 - API Keys:
   - [Alibaba Cloud Dashscope](https://dashscope.aliyuncs.com/) (for video generation)
   - [ElevenLabs](https://elevenlabs.io/) (for text-to-speech)
@@ -72,14 +74,19 @@ An automated video generation pipeline that takes text descriptions and produces
    # Edit .env and add your API keys
    ```
 
-3. **Start the services**
+3. **Install dependencies with uv**
    ```bash
-   docker-compose up -d
+   uv sync
    ```
 
-4. **Verify deployment**
+4. **Start Redis** (in another terminal)
    ```bash
-   curl http://localhost:8000/docs
+   redis-server
+   ```
+
+5. **Run the API server**
+   ```bash
+   uv run fastapi run api.py
    ```
 
 The API will be available at `http://localhost:8000` and the interactive documentation at `http://localhost:8000/docs`.
@@ -161,7 +168,7 @@ curl -X POST "http://localhost:8000/generate_image" \
 | **Video Generation** | Alibaba Dashscope Wan2.1 |
 | **Video Processing** | MoviePy |
 | **State Management** | Redis |
-| **Containerization** | Docker, Docker Compose |
+| **Package Manager** | uv |
 
 ## System Design
 
@@ -219,11 +226,11 @@ FrameStormBackend/
 
 ## Development
 
-### Running Locally Without Docker
+### Running with uv
 
-1. **Install Python dependencies**
+1. **Install dependencies**
    ```bash
-   pip install -r requirements.txt
+   uv sync
    ```
 
 2. **Start Redis**
@@ -231,20 +238,12 @@ FrameStormBackend/
    redis-server
    ```
 
-3. **Update Redis connection in api.py**
-   ```python
-   redis_client = redis.Redis(host="localhost", port=6379, db=0)
-   ```
-
-4. **Run the FastAPI server**
+3. **Run the server**
    ```bash
-   uvicorn api:app --reload
+   uv run fastapi run api.py
    ```
 
-### Running Tests
-```bash
-pytest tests/
-```
+The server will reload automatically on code changes.
 
 ## Performance
 

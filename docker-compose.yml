@@ -1,9 +1,8 @@
-version: '3.8'
 
 services:
   # Redis service for state management
   redis:
-    image: redis:7-alpine
+    image: redis:latest
     container_name: framestorm-redis
     ports:
       - "6379:6379"
