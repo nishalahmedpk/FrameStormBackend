@@ -13,7 +13,6 @@ An automated video generation pipeline that takes text descriptions and produces
 - Redis state storage for persistent project data across sessions
 - LangGraph-based workflow orchestration with conditional routing
 - FastAPI REST endpoints
-- Docker Compose setup for deployment
 
 ## Architecture
 
@@ -52,11 +51,10 @@ An automated video generation pipeline that takes text descriptions and produces
 ## Getting Started
 
 ### Prerequisites
-- Python 3.10+
-- [uv](https://github.com/astral-sh/uv) package manager
-- Redis running locally
+- Python 3.9+
+- Redis server running locally
 - API Keys:
-  - [Alibaba Model Studio](https://modelstudio.alibabacloud.com/) (for video/text generation)
+  - [Alibaba Cloud Dashscope](https://dashscope.aliyuncs.com/) (for video generation)
   - [ElevenLabs](https://elevenlabs.io/) (for text-to-speech)
   - [LangSmith](https://smith.langchain.com/) (optional, for monitoring)
 
@@ -68,28 +66,33 @@ An automated video generation pipeline that takes text descriptions and produces
    cd FrameStormBackend
    ```
 
-2. **Configure environment variables**
+2. **Install uv** (if not already installed)
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+3. **Install dependencies**
+   ```bash
+   uv sync
+   ```
+
+4. **Configure environment variables**
    ```bash
    cp .env.example .env
    # Edit .env and add your API keys
    ```
 
-3. **Install dependencies with uv**
-   ```bash
-   uv sync
-   ```
-
-4. **Start Redis** (in another terminal)
+5. **Start Redis** (in a separate terminal)
    ```bash
    redis-server
    ```
 
-5. **Run the API server**
+6. **Run the server**
    ```bash
    uv run fastapi run api.py
    ```
 
-The API will be available at `http://localhost:8000` and the interactive documentation at `http://localhost:8000/docs`.
+The API will be available at `http://localhost:8000` and interactive docs at `http://localhost:8000/docs`.
 
 ## API Usage
 
@@ -168,7 +171,7 @@ curl -X POST "http://localhost:8000/generate_image" \
 | **Video Generation** | Alibaba Dashscope Wan2.1 |
 | **Video Processing** | MoviePy |
 | **State Management** | Redis |
-| **Package Manager** | uv |
+| **Containerization** | Docker, Docker Compose |
 
 ## System Design
 
@@ -203,8 +206,6 @@ FrameStormBackend/
 ├── videogeneration.py      # Alibaba Dashscope integration
 ├── requirements.txt        # Python dependencies
 ├── pyproject.toml          # Project metadata
-├── Dockerfile              # Container image definition
-├── docker-compose.yml      # Multi-service orchestration
 ├── .env.example            # Environment template
 └── README.md               # Documentation
 ```
@@ -226,24 +227,20 @@ FrameStormBackend/
 
 ## Development
 
-### Running with uv
+### Running the Server with Auto-Reload
+```bash
+uv run fastapi run api.py --reload
+```
 
-1. **Install dependencies**
-   ```bash
-   uv sync
-   ```
+### Installing New Packages
+```bash
+uv pip install <package-name>
+```
 
-2. **Start Redis**
-   ```bash
-   redis-server
-   ```
-
-3. **Run the server**
-   ```bash
-   uv run fastapi run api.py
-   ```
-
-The server will reload automatically on code changes.
+### Running Tests
+```bash
+uv run pytest tests/
+```
 
 ## Performance
 
