@@ -54,7 +54,7 @@ An automated video generation pipeline that takes text descriptions and produces
 ### Prerequisites
 - Docker & Docker Compose
 - API Keys:
-  - [Alibaba Cloud Dashscope](https://dashscope.aliyuncs.com/) (for video generation)
+  - [Alibaba Model Studio](https://modelstudio.alibabacloud.com/) (for video/text generation)
   - [ElevenLabs](https://elevenlabs.io/) (for text-to-speech)
   - [LangSmith](https://smith.langchain.com/) (optional, for monitoring)
 
